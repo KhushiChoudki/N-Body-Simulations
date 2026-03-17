@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    body::Body,
+    body::{Body, BodyType},
     quadtree::{Node, Quadtree},
 };
 
@@ -21,6 +21,7 @@ pub static UPDATE_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 pub static BODIES: Lazy<Mutex<Vec<Body>>> = Lazy::new(|| Mutex::new(Vec::new()));
 pub static QUADTREE: Lazy<Mutex<Vec<Node>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static WARNINGS: Lazy<Mutex<Vec<(usize, usize, f32)>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 pub static SPAWN: Lazy<Mutex<Vec<Body>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -43,6 +44,7 @@ pub struct Renderer {
 
     bodies: Vec<Body>,
     quadtree: Vec<Node>,
+    warnings: Vec<(usize, usize, f32)>,
 }
 
 impl quarkstrom::Renderer for Renderer {
@@ -66,6 +68,7 @@ impl quarkstrom::Renderer for Renderer {
 
             bodies: Vec::new(),
             quadtree: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -112,9 +115,12 @@ impl quarkstrom::Renderer for Renderer {
             mouse * self.scale + self.pos
         };
 
+use crate::body::{Body, BodyType, BodyType::*};
+
+// ... in input method ...
         if input.mouse_pressed(1) {
             let mouse = world_mouse();
-            self.spawn_body = Some(Body::new(mouse, Vec2::zero(), 1.0, 1.0));
+            self.spawn_body = Some(Body::new(mouse, Vec2::zero(), 1.0, 1.0, Satellite));
             self.angle = None;
             self.total = Some(0.0);
         } else if input.mouse_held(1) {
@@ -135,7 +141,7 @@ impl quarkstrom::Renderer for Renderer {
                     self.angle = Some(angle);
                 }
                 body.radius = body.mass.cbrt();
-                body.vel = mouse - body.pos;
+                body.vel = (mouse - body.pos) * 0.1; // Scale velocity for manual spawn
             }
         } else if input.mouse_released(1) {
             self.confirmed_bodies = self.spawn_body.take();
@@ -148,6 +154,7 @@ impl quarkstrom::Renderer for Renderer {
             if *lock {
                 std::mem::swap(&mut self.bodies, &mut BODIES.lock());
                 std::mem::swap(&mut self.quadtree, &mut QUADTREE.lock());
+                std::mem::swap(&mut self.warnings, &mut WARNINGS.lock());
             }
             if let Some(body) = self.confirmed_bodies.take() {
                 self.bodies.push(body);
@@ -165,18 +172,25 @@ impl quarkstrom::Renderer for Renderer {
         if !self.bodies.is_empty() {
             if self.show_bodies {
                 for i in 0..self.bodies.len() {
-                    ctx.draw_circle(self.bodies[i].pos, self.bodies[i].radius, [0xff; 4]);
+                    let color = match self.bodies[i].body_type {
+                        BodyType::Earth => [0, 100, 255, 255],
+                        BodyType::Satellite => [255, 255, 255, 255],
+                        BodyType::Debris => [150, 150, 150, 255],
+                    };
+                    ctx.draw_circle(self.bodies[i].pos, self.bodies[i].radius, color);
                 }
             }
 
-            if let Some(body) = &self.confirmed_bodies {
-                ctx.draw_circle(body.pos, body.radius, [0xff; 4]);
+            if let Some(body) = &self.spawn_body {
+                ctx.draw_circle(body.pos, body.radius, [255, 255, 255, 100]); // Ghost preview
                 ctx.draw_line(body.pos, body.pos + body.vel, [0xff; 4]);
             }
 
-            if let Some(body) = &self.spawn_body {
-                ctx.draw_circle(body.pos, body.radius, [0xff; 4]);
-                ctx.draw_line(body.pos, body.pos + body.vel, [0xff; 4]);
+            // Draw warning lines
+            for (i, j, _) in &self.warnings {
+                let p1 = self.bodies[*i].pos;
+                let p2 = self.bodies[*j].pos;
+                ctx.draw_line(p1, p2, [255, 0, 0, 255]);
             }
         }
 
@@ -249,6 +263,27 @@ impl quarkstrom::Renderer for Renderer {
             .show(ctx, |ui| {
                 ui.checkbox(&mut self.show_bodies, "Show Bodies");
                 ui.checkbox(&mut self.show_quadtree, "Show Quadtree");
+                
+                ui.separator();
+                ui.label("Constellation Status");
+                let total_energy: f32 = self.bodies.iter().filter(|b| b.body_type == BodyType::Satellite).map(|b| b.energy).sum();
+                let active_satellites = self.bodies.iter().filter(|b| b.body_type == BodyType::Satellite && b.exposure > 0.0).count();
+                let total_satellites = self.bodies.iter().filter(|b| b.body_type == BodyType::Satellite).count();
+                
+                ui.label(format!("Total Energy: {:.2} MW", total_energy));
+                ui.label(format!("Active Satellites: {}/{}", active_satellites, total_satellites));
+                
+                let avg_exposure = if total_satellites > 0 {
+                    self.bodies.iter().filter(|b| b.body_type == BodyType::Satellite).map(|b| b.exposure).sum::<f32>() / total_satellites as f32
+                } else { 0.0 };
+                ui.label(format!("Avg Solar Exposure: {:.1}%", avg_exposure * 100.0));
+
+                if !self.warnings.is_empty() {
+                    ui.separator();
+                    ui.colored_label(egui::Color32::RED, "COLLISION WARNINGS");
+                    ui.label(format!("Active Alerts: {}", self.warnings.len()));
+                }
+
                 if self.show_quadtree {
                     let range = &mut self.depth_range;
                     ui.horizontal(|ui| {

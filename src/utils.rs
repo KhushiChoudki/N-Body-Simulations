@@ -1,16 +1,19 @@
-use crate::body::Body;
+use crate::body::{Body, BodyType};
 use ultraviolet::Vec2;
 
 pub fn uniform_disc(n: usize) -> Vec<Body> {
     fastrand::seed(0);
-    let inner_radius = 25.0;
-    let outer_radius = (n as f32).sqrt() * 5.0;
+    let inner_radius = 50.0;
+    let outer_radius = (n as f32).sqrt() * 6.0;
 
     let mut bodies: Vec<Body> = Vec::with_capacity(n);
 
-    let m = 1e6;
-    let center = Body::new(Vec2::zero(), Vec2::zero(), m as f32, inner_radius);
-    bodies.push(center);
+    // Earth at the center
+    let earth_mass = 2e7;
+    let earth = Body::new(Vec2::zero(), Vec2::zero(), earth_mass as f32, inner_radius, BodyType::Earth);
+    bodies.push(earth);
+
+    let satellite_count = (n as f32 * 0.1) as usize; // 10% are satellites
 
     while bodies.len() < n {
         let a = fastrand::f32() * std::f32::consts::TAU;
@@ -22,7 +25,13 @@ pub fn uniform_disc(n: usize) -> Vec<Body> {
         let mass = 1.0f32;
         let radius = mass.cbrt();
 
-        bodies.push(Body::new(pos, vel, mass, radius));
+        let body_type = if bodies.len() <= satellite_count {
+            BodyType::Satellite
+        } else {
+            BodyType::Debris
+        };
+
+        bodies.push(Body::new(pos, vel, mass, radius, body_type));
     }
 
     bodies.sort_by(|a, b| a.pos.mag_sq().total_cmp(&b.pos.mag_sq()));

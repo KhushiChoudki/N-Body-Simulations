@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 
 mod body;
+mod brain;
 mod quadtree;
 mod renderer;
 mod simulation;
@@ -44,6 +45,11 @@ fn render(simulation: &mut Simulation) {
         let mut lock = renderer::QUADTREE.lock();
         lock.clear();
         lock.extend_from_slice(&simulation.quadtree.nodes);
+    }
+    {
+        let mut lock = renderer::WARNINGS.lock();
+        lock.clear();
+        lock.extend_from_slice(&simulation.warnings);
     }
     *lock |= true;
 }
